@@ -1,0 +1,32 @@
+/* Plantilla accesible del Plan MAAR-TEA (WeasyPrint / navegador). A4, tipografía legible, contraste >= 4.5:1,
+   ningún dato solo por color (el semáforo siempre lleva texto). */
+@page {
+  size: A4;
+  margin: 18mm 16mm 20mm 16mm;
+  @bottom-center { content: "Plan MAAR-TEA · página " counter(page) " de " counter(pages); font-size: 9pt; color: #4a4a4a; }
+}
+html { font-family: "Atkinson Hyperlegible", "Lexend", "Segoe UI", Arial, Helvetica, sans-serif; font-size: 11pt; color: #1b1b1b; line-height: 1.5; }
+body { margin: 0 auto; max-width: 190mm; background: #ffffff; }
+h1 { font-size: 20pt; margin: 0 0 4pt 0; color: #0b3d5c; }
+h2 { font-size: 14pt; margin: 18pt 0 6pt 0; color: #0b3d5c; border-bottom: 2px solid #0b3d5c; padding-bottom: 2pt; page-break-after: avoid; }
+h3 { font-size: 12pt; margin: 12pt 0 4pt 0; color: #1b1b1b; page-break-after: avoid; }
+p { margin: 4pt 0; }
+.subtitulo { color: #3d3d3d; margin: 0 0 10pt 0; }
+.aviso { border: 2px solid #8a5a00; background: #fff6e0; color: #4a3000; padding: 6pt 8pt; margin: 8pt 0; }
+.ok { border: 2px solid #1d6b2f; background: #e9f7ec; color: #12411d; padding: 6pt 8pt; margin: 8pt 0; }
+.mal { border: 2px solid #9b1c1c; background: #fdecec; color: #5c0f0f; padding: 6pt 8pt; margin: 8pt 0; }
+table { width: 100%; border-collapse: collapse; margin: 6pt 0 10pt 0; font-size: 9.5pt; }
+caption { text-align: left; font-weight: bold; padding: 2pt 0; }
+th, td { border: 1px solid #6b6b6b; padding: 4pt 5pt; vertical-align: top; text-align: left; }
+th { background: #e6eef3; color: #0b2a3f; }
+tr { page-break-inside: avoid; }
+dl.datos { display: grid; grid-template-columns: 38mm 1fr; gap: 2pt 8pt; margin: 6pt 0; }
+dl.datos dt { font-weight: bold; }
+dl.datos dd { margin: 0; }
+.sem { display: inline-block; padding: 1pt 5pt; border: 1px solid #1b1b1b; font-weight: bold; }
+.sem-VERDE { background: #d7f0dc; color: #12411d; }
+.sem-AMARILLO { background: #fff0b8; color: #4a3a00; }
+.sem-ROJO { background: #f8d4d4; color: #5c0f0f; }
+.hash { font-family: "Consolas", "Courier New", monospace; font-size: 9pt; word-break: break-all; }
+footer.pie { margin-top: 16pt; font-size: 9pt; color: #4a4a4a; border-top: 1px solid #6b6b6b; padding-top: 4pt; }
+@media print { body { max-width: none; } }
