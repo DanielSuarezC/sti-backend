@@ -173,14 +173,49 @@ def punto_corte(body: PuntoCorteBody, request: Request, db: Session = Depends(ge
     return {"punto_corte": body.punto_corte, "detail": "Punto de corte actualizado. Las aplicaciones anteriores conservan el corte con el que se calcularon."}
 
 
-# ----------------------------------------------------------------------------- Vía 3: CSV
+@router.post("/aq10/inicializar")
+def inicializar_aq10(request: Request, db: Session = Depends(get_db), admin: Usuario = ADMIN):
+    """Carga la versión inicial del instrumento AQ-10 en español si aún no está configurado."""
+    row = aq10_config.get_active_row(db)
+    if row is None:
+        from app.data import aq10 as aq10_data
+        from app.models.consentimiento import CuestionarioAQ10
+        nueva = CuestionarioAQ10(
+            nombre="AQ-10 Adultos (Allison et al., 2012) — español",
+            version="1.0",
+            idioma="es-CO",
+            fuente=aq10_data.FUENTE,
+            items=aq10_data.items_json(),
+            opciones=aq10_data.opciones_json(),
+            punto_corte=aq10_data.PUNTO_CORTE,
+            revision_linguistica_pendiente=True,
+            activo=True,
+        )
+        db.add(nueva)
+        db.flush()
+        audit.log(db, admin, "AQ10_INICIALIZADO", "cuestionario_aq10", nueva.id, request=request)
+        db.commit()
+    return _aq10_out(db)
+
+
+# ----------------------------------------------------------------------------- Vía 3: CSV / Excel
 @router.get("/estudiantes/plantilla-csv")
 def plantilla(_: Usuario = ADMIN):
     return Response("﻿" + csv_import.plantilla_csv(), media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": 'attachment; filename="plantilla_estudiantes.csv"'})
 
 
+@router.get("/estudiantes/plantilla-xlsx")
+def plantilla_xlsx_descarga(_: Usuario = ADMIN):
+    return Response(
+        csv_import.plantilla_xlsx(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="plantilla_estudiantes.xlsx"'},
+    )
+
+
 @router.post("/estudiantes/importar-csv")
+@router.post("/estudiantes/importar")
 async def importar_csv(
     request: Request, archivo: UploadFile = File(...), dry_run: bool = Query(True), omitir_errores: bool = Query(False),
     db: Session = Depends(get_db), admin: Usuario = ADMIN,

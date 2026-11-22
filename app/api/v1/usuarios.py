@@ -424,6 +424,7 @@ def desactivar(usuario_id: int, request: Request, body: MotivoBody | None = None
 
 
 @router.post("/{usuario_id}/reactivar")
+@router.post("/{usuario_id}/activar")
 def reactivar(usuario_id: int, request: Request, db: Session = Depends(get_db), actor: Usuario = ADMIN):
     u = _get_user(db, usuario_id)
     if str(u.estado) != EstadoUsuario.INACTIVO:

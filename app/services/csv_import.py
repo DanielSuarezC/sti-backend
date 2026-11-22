@@ -89,6 +89,61 @@ def read_csv_rows(content: bytes) -> tuple[list[str], list[tuple[int, dict[str, 
     return headers, rows
 
 
+def read_excel_rows(content: bytes) -> tuple[list[str], list[tuple[int, dict[str, str]]]]:
+    """Lee filas de un archivo Excel (.xlsx). Devuelve (encabezados normalizados, [(num_fila, fila)])."""
+    import openpyxl
+
+    if len(content) > MAX_BYTES:
+        raise AppError("El archivo es demasiado grande (máximo 2 MB).", "ARCHIVO_MUY_GRANDE", status_code=413)
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        sheet = wb.active
+    except Exception as exc:
+        raise Unprocessable(f"No pudimos leer el archivo Excel (.xlsx): {exc}", "EXCEL_ILEGIBLE")
+
+    rows_iter = list(sheet.iter_rows(values_only=True))
+    if not rows_iter:
+        raise Unprocessable("El archivo Excel está vacío. Descargue la plantilla y complétela.", "EXCEL_VACIO")
+
+    # Encontrar la fila de encabezados (primera fila no vacía que no empiece con #)
+    header_idx = None
+    for idx, row in enumerate(rows_iter):
+        non_empty = [c for c in row if c is not None and str(c).strip()]
+        if non_empty:
+            first_val = str(non_empty[0]).strip()
+            if first_val.startswith("#"):
+                continue
+            header_idx = idx
+            break
+
+    if header_idx is None:
+        raise Unprocessable("El archivo Excel no tiene encabezados válidos.", "EXCEL_VACIO")
+
+    header_row = rows_iter[header_idx]
+    headers = [_norm(str(h or "")) for h in header_row if h is not None and str(h).strip()]
+
+    rows: list[tuple[int, dict[str, str]]] = []
+    for num, row in enumerate(rows_iter[header_idx + 1:], start=header_idx + 2):
+        if not any(c is not None and str(c).strip() for c in row):
+            continue
+        vals = [str(c).strip() if c is not None else "" for c in row]
+        row_dict = {headers[i]: (vals[i] if i < len(vals) else "") for i in range(min(len(headers), len(vals)))}
+        # Rellenar encabezados faltantes con vacío
+        for h in headers:
+            row_dict.setdefault(h, "")
+        rows.append((num, row_dict))
+
+    return headers, rows
+
+
+def read_any_rows(content: bytes, filename: str | None = None) -> tuple[list[str], list[tuple[int, dict[str, str]]]]:
+    """Detecta automáticamente si el archivo es Excel (.xlsx) o CSV y lo procesa."""
+    es_excel = (filename and filename.lower().endswith(".xlsx")) or content.startswith(b"PK\x03\x04")
+    if es_excel:
+        return read_excel_rows(content)
+    return read_csv_rows(content)
+
+
 def plantilla_csv() -> str:
     return (
         "# Plantilla de importación de estudiantes (Vía 3). Elimine estas líneas que empiezan con # antes de cargar.\n"
@@ -96,6 +151,60 @@ def plantilla_csv() -> str:
         "# Columnas opcionales al final: telefono, semestre_actual, anio_ingreso.\n"
         + ",".join(ENCABEZADOS + OPCIONALES) + "\n"
     )
+
+
+def plantilla_xlsx() -> bytes:
+    """Genera una plantilla Excel (.xlsx) con estilos, columnas y fila de ejemplo."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Estudiantes"
+
+    headers = ENCABEZADOS + OPCIONALES
+    ws.append(headers)
+
+    header_font = Font(name="Calibri", size=11, bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+    thin_border = Border(
+        left=Side(style="thin", color="D1D5DB"),
+        right=Side(style="thin", color="D1D5DB"),
+        top=Side(style="thin", color="D1D5DB"),
+        bottom=Side(style="thin", color="D1D5DB"),
+    )
+
+    for col_idx in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = thin_border
+
+    # Fila de ejemplo
+    ejemplo = [
+        "María Camila Restrepo Pérez",
+        "2026102045",
+        "mcrestrepo@correo.unicordoba.edu.co",
+        "ENF",
+        "3001234567",
+        1,
+        2026,
+    ]
+    ws.append(ejemplo)
+    for col_idx in range(1, len(ejemplo) + 1):
+        cell = ws.cell(row=2, column=col_idx)
+        cell.border = thin_border
+
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        col_letter = get_column_letter(col[0].column)
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 16)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def _resolver_columnas(headers: list[str]) -> dict[str, str]:
@@ -126,9 +235,9 @@ def _to_int(valor: str, campo: str, minimo: int, maximo: int) -> tuple[int | Non
     return n, None
 
 
-def analyze_students(db: Session, content: bytes) -> dict[str, Any]:
+def analyze_students(db: Session, content: bytes, filename: str | None = None) -> dict[str, Any]:
     """Valida todas las filas sin escribir. Devuelve filas analizadas + errores + conteos."""
-    headers, rows = read_csv_rows(content)
+    headers, rows = read_any_rows(content, filename)
     cols = _resolver_columnas(headers)
     if len(rows) > MAX_FILAS:
         raise AppError(f"El archivo tiene {len(rows)} filas; el máximo por carga es {MAX_FILAS}.", "CSV_DEMASIADAS_FILAS",
@@ -231,7 +340,7 @@ def import_students(
     nombre_archivo: str | None = None, request=None, hoy: date | None = None,
 ) -> dict[str, Any]:
     """Vía 3. Con `dry_run` no escribe nada. Sin commit (lo hace el router)."""
-    an = analyze_students(db, content)
+    an = analyze_students(db, content, filename=nombre_archivo)
     base = {
         "dry_run": dry_run, "total_filas": an["total_filas"], "validas": an["nuevas"] + an["ya_existentes"],
         "nuevas": an["nuevas"], "ya_existentes": an["ya_existentes"], "con_errores": an["con_errores"],
