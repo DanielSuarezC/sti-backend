@@ -48,11 +48,41 @@ PASOS: list[tuple[int, str, str, str, str, str]] = [
     (12, "Favorecer la trayectoria", "Actualización del plan, trayectoria y notas de continuidad para el siguiente semestre.", "M8", "F10", "f10"),
 ]
 
-_EST = {"consentimiento": "/estudiante/consentimiento", "aq10": "/estudiante/aq10", "f1": "/estudiante/perfil",
-        "f2": "/estudiante/perfil", "f3": "/estudiante/mi-ruta", "f4": "/estudiante/barreras",
-        "f5": "/estudiante/barreras", "sugerencias": "/estudiante/mi-ruta", "plan": "/estudiante/plan",
-        "matriz": "/estudiante/plan", "seguimiento": "/estudiante/seguimiento", "f9": "/estudiante/evaluacion",
-        "f10": "/estudiante/continuidad", "ruta": "/estudiante/mi-ruta", "inasistencia": "/estudiante/mi-ruta"}
+_EST = {
+    "consentimiento": "/estudiante/consentimiento",
+    "aq10": "/estudiante/aq10",
+    "f1": "/estudiante/perfil",
+    "f2": "/estudiante/perfil",
+    "f3": "/estudiante/perfil",
+    "f4": "/estudiante/perfil",
+    "f5": "/estudiante/perfil",
+    "sugerencias": "/estudiante/plan",
+    "plan": "/estudiante/plan",
+    "matriz": "/estudiante/plan",
+    "seguimiento": "/estudiante/seguimiento",
+    "f9": "/estudiante/seguimiento",
+    "f10": "/estudiante/plan",
+    "ruta": "/estudiante/mi-ruta",
+    "inasistencia": "/estudiante/mi-ruta",
+}
+
+_BIENESTAR_RUTAS = {
+    "consentimiento": "",
+    "aq10": "/aq10",
+    "f1": "/caracterizacion",
+    "f2": "/caracterizacion",
+    "f3": "/contexto-barreras",
+    "f4": "/contexto-barreras",
+    "f5": "/contexto-barreras",
+    "sugerencias": "/sugerencias",
+    "plan": "/plan",
+    "matriz": "/plan",
+    "seguimiento": "/seguimiento",
+    "f9": "/evaluacion",
+    "f10": "/evaluacion",
+    "ruta": "",
+    "inasistencia": "/inasistencia",
+}
 
 
 def ruta_front(rol: Rol | str, clave: str, *, estudiante_id: int | None = None, plan_id: int | None = None,
@@ -67,7 +97,8 @@ def ruta_front(rol: Rol | str, clave: str, *, estudiante_id: int | None = None, 
     if rol == "BIENESTAR":
         if estudiante_id is None:
             return "/bienestar"
-        return f"/bienestar/estudiantes/{estudiante_id}" + ("" if clave == "ruta" else f"/{clave}")
+        sub = _BIENESTAR_RUTAS.get(clave, f"/{clave}" if clave != "ruta" else "")
+        return f"/bienestar/estudiantes/{estudiante_id}{sub}"
     if rol == "COORDINADOR":
         if clave in ("plan", "matriz") and plan_id:
             return f"/coordinador/planes/{plan_id}"
@@ -306,8 +337,14 @@ def calcular_ruta(db: Session, est: Estudiante, rol: Rol | str, *, hoy: date | N
         s = pend[0]
         siguiente = {"titulo": s["titulo"], "descripcion": s["descripcion"], "ruta_frontend": s["ruta_frontend"], "codigo": s["codigo"]}
     elif actual is not None:
-        siguiente = {"titulo": f"Estamos trabajando en el paso {actual['numero']}: {actual['nombre']}",
-                     "descripcion": "Por ahora no hay nada pendiente de su parte. Le avisaremos cuando haya algo para hacer.",
+        desc = (
+            "El equipo de Bienestar Universitario está trabajando en este paso. "
+            "Por ahora no hay acciones pendientes de su parte; le avisaremos cuando esté listo para su revisión y concertación."
+            if rol == "ESTUDIANTE"
+            else "Por ahora no hay nada pendiente de su parte. Le avisaremos cuando haya algo para hacer."
+        )
+        siguiente = {"titulo": f"Paso {actual['numero']}: {actual['nombre']} (a cargo de Bienestar)",
+                     "descripcion": desc,
                      "ruta_frontend": ruta_front(rol, "ruta", estudiante_id=est.id), "codigo": None}
     else:
         siguiente = {"titulo": "Recorrido completo", "descripcion": "Completó los 12 pasos de este semestre.",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 
 from app.models.enums import Rol
 
@@ -54,19 +54,33 @@ class MotivoBody(BaseModel):
 
 class EstudianteVia1(BaseModel):
     nombre_completo: str = Field(min_length=3, max_length=255)
-    codigo_estudiante: str = Field(min_length=1, max_length=50)
+    cedula: str | None = Field(None, min_length=1, max_length=50)
+    codigo_estudiante: str | None = Field(None, min_length=1, max_length=50)
     programa_id: int
     email: EmailStr
+    tipo_correo: str | None = Field("INSTITUCIONAL", max_length=20)
+    es_correo_personal: bool = False
     telefono: str | None = Field(None, max_length=20)
     semestre_actual: int | None = Field(None, ge=1, le=20)
-    consentimiento_verbal_declarado: bool
+    consentimiento_verbal_declarado: bool = True
 
     @field_validator("consentimiento_verbal_declarado")
     @classmethod
     def _consent(cls, v):
         if v is not True:
-            raise ValueError("debe declarar que el estudiante dio su consentimiento verbal para crear la cuenta")
+            raise ValueError("Debe declarar que el estudiante dio su consentimiento verbal para crear la cuenta.")
         return v
+
+    @model_validator(mode="after")
+    def _check_identificacion(self):
+        id_val = (self.cedula or self.codigo_estudiante or "").strip()
+        if not id_val:
+            raise ValueError("La cédula o documento de identidad es obligatorio.")
+        if not self.cedula:
+            self.cedula = id_val
+        if not self.codigo_estudiante:
+            self.codigo_estudiante = id_val
+        return self
 
 
 class AsignacionCreate(BaseModel):

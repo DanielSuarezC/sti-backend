@@ -77,7 +77,7 @@ def create_student_account(
     if email_taken(db, email):
         raise Conflict("Ya existe una cuenta con ese correo electrónico.", "EMAIL_DUPLICADO")
     if codigo_taken(db, codigo):
-        raise Conflict("Ya existe un estudiante con ese código estudiantil.", "CODIGO_ESTUDIANTE_DUPLICADO")
+        raise Conflict("Ya existe un estudiante registrado con esa cédula o documento de identidad.", "CEDULA_DUPLICADA")
     perfil: dict = {"codigo_estudiante": codigo, "programa_id": programa_id, "via_ingreso": via}
     if bienestar_asignado_id:
         perfil["bienestar_asignado_id"] = bienestar_asignado_id

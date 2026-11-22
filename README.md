@@ -16,7 +16,7 @@ pip install -r requirements-dev.txt          # (+ requirements-ai.txt opcional p
 copy .env.example .env                       # opcional: en desarrollo todo tiene valores por defecto
 alembic upgrade head                         # crea sti_dev.db con las 100 tablas
 $env:SEED_DEMO="1"; python -m scripts.seed   # referencia + usuarios demo (omitir SEED_DEMO=1 para solo referencia)
-uvicorn app.main:app --reload                # http://localhost:8000/docs
+uvicorn app.main:app --reload --port 8000             # http://localhost:8000/docs
 ```
 
 * Sin `.env`: `JWT_SECRET` y `DATA_ENCRYPTION_KEY` se generan una vez y se guardan en `.dev_secrets.json` (ignorado por git).

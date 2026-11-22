@@ -273,20 +273,29 @@ def archivar_asignatura(asignatura_id: int, request: Request, db: Session = Depe
 def crear_estudiante_via1(body: EstudianteVia1, request: Request, db: Session = Depends(get_db),
                           actor: Usuario = Depends(require_roles(Rol.BIENESTAR, Rol.ADMIN))):
     """Vía 1: Bienestar crea la cuenta con consentimiento verbal declarado. Invitación de 72 h; el F0 sigue siendo obligatorio."""
-    student_intake.validar_email_institucional(body.email)
+    # Si es correo personal (ej. primer semestre sin correo institucional), se permite
+    es_personal = body.es_correo_personal or (body.tipo_correo and body.tipo_correo.upper() == "PERSONAL")
+    if not es_personal:
+        student_intake.validar_email_institucional(body.email)
+
     student_intake.get_programa_or_422(db, body.programa_id)
+    identificacion = (body.cedula or body.codigo_estudiante or "").strip()
     user, est = student_intake.create_student_account(
-        db, nombre_completo=body.nombre_completo, email=body.email, codigo=body.codigo_estudiante,
+        db, nombre_completo=body.nombre_completo, email=body.email, codigo=identificacion,
         programa_id=body.programa_id, via=ViaIngreso.BIENESTAR, estado=EstadoUsuario.PENDIENTE_ACTIVACION,
         telefono=body.telefono, semestre_actual=body.semestre_actual,
         bienestar_asignado_id=actor.id if str(actor.rol) == Rol.BIENESTAR else None,
     )
+    user.numero_documento = identificacion
     invite_user(db, user, actor=actor, request=request, extra={"rol": "ESTUDIANTE"})
     audit.log(db, actor, "ESTUDIANTE_CREADO_VIA1", "estudiante", est.id,
-              {"consentimiento_verbal_declarado": True, "programa_id": body.programa_id}, request=request, estudiante_id=est.id)
+              {"consentimiento_verbal_declarado": True, "programa_id": body.programa_id, "cedula": identificacion,
+               "tipo_correo": "PERSONAL" if es_personal else "INSTITUCIONAL"},
+              request=request, estudiante_id=est.id)
     db.commit()
+    tipo_msg = "personal" if es_personal else "institucional"
     return {**_out(db, user), "estudiante_id": est.id,
-            "detail": "Cuenta creada. Enviamos la invitación al correo institucional (vale 72 horas). El estudiante deberá firmar el consentimiento (F0) al ingresar."}
+            "detail": f"Cuenta creada. Enviamos la invitación al correo {tipo_msg} (vale 72 horas). El estudiante deberá firmar el consentimiento (F0) al ingresar."}
 
 
 # ----------------------------------------------------------------------------- CRUD de cuentas
