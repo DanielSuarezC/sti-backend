@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import io
 
 from sqlalchemy import select
@@ -21,6 +23,7 @@ from tests.factories import make_user
 
 
 # ----------------------------------------------------------------------------- cuentas
+@pytest.mark.usefixtures("con_correo")
 def test_admin_crea_docente_con_invitacion_72h(client, db, world, auth):
     r = client.post("/api/v1/usuarios", headers=auth(world.admin), json={
         "email": "Nuevo.Docente@example.com", "nombre_completo": "Nuevo Docente", "rol": "DOCENTE",
@@ -111,6 +114,7 @@ def test_no_autodesactivar_ni_ultimo_admin_y_archivar(client, db, world, auth):
     assert fila.deleted_at is not None
 
 
+@pytest.mark.usefixtures("con_correo")
 def test_reenviar_invitacion(client, db, world, auth):
     h = auth(world.admin)
     client.post("/api/v1/usuarios", headers=h, json={"email": "inv@example.com", "nombre_completo": "Invitado Docente", "rol": "DOCENTE"})
@@ -161,6 +165,7 @@ def test_programas_y_asignaturas_crud(client, world, auth):
 
 
 # ----------------------------------------------------------------------------- Vía 1
+@pytest.mark.usefixtures("con_correo")
 def test_via1_bienestar_crea_estudiante(client, db, world, auth):
     h = auth(world.bienestar)
     body = {"nombre_completo": "Ana Estudiante", "codigo_estudiante": "2026777", "programa_id": world.programa.id,
@@ -196,6 +201,7 @@ SOL = {"codigo_estudiantil": "2026888", "email_institucional": "sol@example.com"
        "acepta_aviso_privacidad": True}
 
 
+@pytest.mark.usefixtures("con_correo")
 def test_via2_publica_y_aprobacion(client, db, world, auth):
     r = client.post("/api/v1/solicitudes/publica", json={**SOL, "programa_id": world.programa.id})
     assert r.status_code == 202 and "Bienestar" in r.json()["detail"]
@@ -290,6 +296,7 @@ def test_csv_dry_run_errores_por_fila(client, db, world, auth):
     assert db.query(Estudiante).filter(Estudiante.codigo_estudiante.like("20260%")).count() == 0
 
 
+@pytest.mark.usefixtures("con_correo")
 def test_csv_importa_idempotente_y_estados(client, db, world, auth):
     h = auth(world.admin)
     csv_text = CSV_OK.format(c=world.programa.codigo_programa)
@@ -312,6 +319,7 @@ def test_csv_importa_idempotente_y_estados(client, db, world, auth):
     assert c["con_errores"] == 1 and "otro correo" in c["errores"][0]["mensaje"]
 
 
+@pytest.mark.usefixtures("con_correo")
 def test_csv_con_errores_no_importa_salvo_omitir(client, db, world, auth):
     h = auth(world.admin)
     mixto = (f"nombre_completo,codigo_estudiante,correo_institucional,programa\nBien,2026020,bien@example.com,{world.programa.codigo_programa}\n"

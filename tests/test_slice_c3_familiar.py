@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from datetime import date, timedelta
 
 from sqlalchemy import select
@@ -22,6 +24,7 @@ def _otorgar(client, user, **kw):
     return client.post(f"{API}/estudiantes/mi/familiares", headers=auth_headers(user), json=body)
 
 
+@pytest.mark.usefixtures("con_correo")
 def test_estudiante_otorga_invita_y_lista(client, db, world):
     r = _otorgar(client, world.estudiante_user, alcance=ALC_TODO, vigencia_hasta=(date.today() + timedelta(days=30)).isoformat())
     assert r.status_code == 201, r.text

@@ -53,6 +53,7 @@ class AutorizacionOut(BaseModel):
     vigencia_hasta: datetime | None
     revocada_at: datetime | None
     motivo_revocacion: str | None
+    codigo_vinculacion: str | None = None  # solo mientras está PENDIENTE: el familiar lo usa al registrarse
 
 
 class EstudianteAutorizadoOut(BaseModel):

@@ -37,7 +37,7 @@ from app.schemas.usuarios import (
     UsuarioUpdate,
 )
 from app.services import student_intake
-from app.services.accounts import create_user, invite_user, normalize_email
+from app.services.accounts import create_user, normalize_email, provision_access
 
 # OWNER: slice A
 router = APIRouter(prefix="/usuarios", tags=["usuarios"])
@@ -287,15 +287,19 @@ def crear_estudiante_via1(body: EstudianteVia1, request: Request, db: Session = 
         bienestar_asignado_id=actor.id if str(actor.rol) == Rol.BIENESTAR else None,
     )
     user.numero_documento = identificacion
-    invite_user(db, user, actor=actor, request=request, extra={"rol": "ESTUDIANTE"})
+    acceso = provision_access(db, user, actor=actor, request=request, extra={"rol": "ESTUDIANTE"})
     audit.log(db, actor, "ESTUDIANTE_CREADO_VIA1", "estudiante", est.id,
               {"consentimiento_verbal_declarado": True, "programa_id": body.programa_id, "cedula": identificacion,
                "tipo_correo": "PERSONAL" if es_personal else "INSTITUCIONAL"},
               request=request, estudiante_id=est.id)
     db.commit()
-    tipo_msg = "personal" if es_personal else "institucional"
-    return {**_out(db, user), "estudiante_id": est.id,
-            "detail": f"Cuenta creada. Enviamos la invitación al correo {tipo_msg} (vale 72 horas). El estudiante deberá firmar el consentimiento (F0) al ingresar."}
+    if acceso["modo"] == "DIRECTO":
+        detalle = ("Cuenta creada y lista para usar. Entregue al estudiante el correo y la contraseña provisional que "
+                   "aparecen abajo (se muestran una sola vez). Al ingresar deberá firmar el consentimiento (F0).")
+    else:
+        detalle = ("Cuenta creada. Enviamos la invitación al correo del estudiante (vale 72 horas); también puede "
+                   "compartirle el enlace de activación. Deberá firmar el consentimiento (F0) al ingresar.")
+    return {**_out(db, user), "estudiante_id": est.id, "detail": detalle, "acceso": acceso}
 
 
 # ----------------------------------------------------------------------------- CRUD de cuentas
@@ -340,9 +344,9 @@ def crear_usuario(body: UsuarioCreate, request: Request, db: Session = Depends(g
     user = create_user(db, email=email, nombre_completo=body.nombre_completo, rol=body.rol,
                        numero_documento=body.numero_documento, tipo_documento=body.tipo_documento, telefono=body.telefono,
                        perfil=_perfil_kwargs(body.rol, body))
-    invite_user(db, user, actor=actor, request=request)
+    acceso = provision_access(db, user, actor=actor, request=request)
     db.commit()
-    return _out(db, user)
+    return {**_out(db, user), "acceso": acceso}
 
 
 @router.get("/{usuario_id}")
@@ -429,9 +433,10 @@ def reactivar(usuario_id: int, request: Request, db: Session = Depends(get_db), 
     u = _get_user(db, usuario_id)
     if str(u.estado) != EstadoUsuario.INACTIVO:
         raise Conflict("Solo se pueden reactivar cuentas inactivas.", "CUENTA_NO_INACTIVA")
+    acceso = None
     if not u.password_hash:
         u.estado = EstadoUsuario.PENDIENTE_ACTIVACION
-        invite_user(db, u, actor=actor, request=request)
+        acceso = provision_access(db, u, actor=actor, request=request)
     elif str(u.rol) == Rol.ESTUDIANTE:
         from app.core.permissions import user_has_consent
 
@@ -440,7 +445,7 @@ def reactivar(usuario_id: int, request: Request, db: Session = Depends(get_db), 
         u.estado = EstadoUsuario.ACTIVO
     audit.log(db, actor, audit.Accion.USUARIO_MODIFICADO, "usuario", u.id, {"accion": "REACTIVADO"}, request=request)
     db.commit()
-    return _out(db, u)
+    return {**_out(db, u), "acceso": acceso}
 
 
 @router.delete("/{usuario_id}", status_code=204)
@@ -463,9 +468,28 @@ def reenviar_invitacion(usuario_id: int, request: Request, db: Session = Depends
     _assert_manage(actor, u, permite_estudiante=True)
     if str(u.rol) == Rol.FAMILIAR:
         raise Forbidden("Las invitaciones de familiares las gestiona el propio estudiante.", "ROL_NO_PERMITIDO")
-    student_intake.resend_invitation(db, u, actor=actor, request=request)
+    acceso = student_intake.resend_invitation(db, u, actor=actor, request=request)
     db.commit()
-    return {"detail": "Enviamos una nueva invitación (vale 72 horas).", **_out(db, u)}
+    detalle = ("Generamos una contraseña provisional nueva. Entréguela a la persona (se muestra una sola vez)."
+               if acceso["modo"] == "DIRECTO" else "Enviamos una nueva invitación (vale 72 horas).")
+    return {"detail": detalle, **_out(db, u), "acceso": acceso}
+
+
+@router.post("/{usuario_id}/restablecer-clave")
+def restablecer_clave(usuario_id: int, request: Request, db: Session = Depends(get_db), actor: Usuario = ADMIN_BIENESTAR):
+    """Acceso sin correo: genera una contraseña provisional para quien olvidó su contraseña y no conserva su código
+    de recuperación. Cierra sus sesiones abiertas. Bienestar solo gestiona docentes y estudiantes."""
+    u = _get_user(db, usuario_id)
+    _assert_manage(actor, u, permite_estudiante=True)
+    if u.id == actor.id:
+        raise Conflict("Para cambiar su propia contraseña use «Mi cuenta».", "AUTO_RESTABLECIMIENTO")
+    if str(u.estado) in (EstadoUsuario.INACTIVO, EstadoUsuario.SUSPENDIDO):
+        raise Conflict("La cuenta está inactiva. Reactívela antes de restablecer su contraseña.", "CUENTA_INACTIVA")
+    acceso = provision_access(db, u, actor=actor, request=request)
+    audit.log(db, actor, "CLAVE_RESTABLECIDA_POR_PERSONAL", "usuario", u.id, request=request)
+    db.commit()
+    return {"detail": "Contraseña provisional generada. Entréguela a la persona (se muestra una sola vez).",
+            **_out(db, u), "acceso": acceso}
 
 
 # ----------------------------------------------------------------------------- docentes: asignaciones

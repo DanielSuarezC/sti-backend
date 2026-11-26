@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 import app.models  # noqa: E402,F401
 from app.core.config import get_settings  # noqa: E402
 from app.core.db import session_scope  # noqa: E402
+from app.core.security import hash_password  # noqa: E402
 from app.data import aq10 as aq10_data  # noqa: E402
 from app.data.dua_cast import build_catalog  # noqa: E402
 from app.models import (  # noqa: E402
@@ -239,12 +240,18 @@ def seed_demo(db: Session) -> dict:
     students: dict[str, tuple[Usuario, Estudiante]] = {}
     for i, (key, nombre, etapa) in enumerate(est_defs, start=1):
         email = f"{key}.demo@{DEMO_DOMAIN}"
+        # Sin correo (por defecto) nadie puede abrir un enlace de invitación: la cuenta "invitada" ya tiene clave.
+        invitado = etapa == "invitado" and get_settings().email_activation_required
         u = db.scalar(select(Usuario).where(Usuario.email == email))
+        if u is not None and not u.password_hash and not invitado:  # repara cuentas demo que quedaron sin acceso
+            u.password_hash = hash_password(password)
+            u.estado = EstadoUsuario.PENDIENTE_CONSENTIMIENTO
+            u.activation_token_hash = None
         if u is None:
             u = create_user(
                 db, email=email, nombre_completo=nombre, rol="ESTUDIANTE",
-                password=None if etapa == "invitado" else password, skip_password_policy=True,
-                estado=EstadoUsuario.PENDIENTE_ACTIVACION if etapa == "invitado" else EstadoUsuario.PENDIENTE_CONSENTIMIENTO,
+                password=None if invitado else password, skip_password_policy=True,
+                estado=EstadoUsuario.PENDIENTE_ACTIVACION if invitado else EstadoUsuario.PENDIENTE_CONSENTIMIENTO,
                 perfil={"codigo_estudiante": f"DEMO{i:04d}", "programa_id": prog.id, "anio_ingreso": 2026,
                         "semestre_actual": 1,
                         "via_ingreso": ViaIngreso.MATRICULA_CSV if etapa == "sin_f0" else ViaIngreso.BIENESTAR},

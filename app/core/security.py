@@ -232,6 +232,41 @@ def reset_failed_logins(user: Usuario) -> None:
     user.locked_until = None
 
 
+# --------------------------------------------------------------------------- código de recuperación (sin correo)
+_ALFABETO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # sin 0/O/1/I para evitar errores al copiar
+
+
+def normalize_recovery_code(raw: str) -> str:
+    return re.sub(r"[^A-Z0-9]", "", (raw or "").upper())
+
+
+def new_recovery_code() -> tuple[str, str]:
+    """(código legible `XXXX-XXXX-XXXX-XXXX`, hash). 16 caracteres de un alfabeto de 32 = 80 bits de entropía."""
+    chars = "".join(secrets.choice(_ALFABETO) for _ in range(16))
+    raw = "-".join(chars[i:i + 4] for i in range(0, 16, 4))
+    return raw, hash_token(normalize_recovery_code(raw))
+
+
+def issue_recovery_code(user: Usuario) -> str:
+    """Genera un código nuevo (invalida el anterior) y devuelve el texto en claro. Hay que mostrarlo UNA vez."""
+    raw, h = new_recovery_code()
+    user.recovery_code_hash = h
+    return raw
+
+
+def verify_recovery_code(user: Usuario, raw: str) -> bool:
+    if not user.recovery_code_hash:
+        return False
+    return secrets.compare_digest(user.recovery_code_hash, hash_token(normalize_recovery_code(raw)))
+
+
+def new_temp_password() -> str:
+    """Contraseña provisional que cumple la política (letras + números, >= min_password_length)."""
+    n = max(get_settings().min_password_length, 12)
+    body = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ") for _ in range(n - 4))
+    return f"{body}{secrets.randbelow(9000) + 1000}"
+
+
 # --------------------------------------------------------------------------- activación / recuperación
 def create_activation_token(user: Usuario, hours: int | None = None) -> str:
     """Genera token de activación (72 h por defecto) y guarda su hash en el usuario. Devuelve el token en claro."""

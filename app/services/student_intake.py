@@ -21,7 +21,7 @@ from app.core.security import create_activation_token
 from app.models.academico import CalendarioAcademico, Matricula, ProgramaAcademico
 from app.models.enums import EstadoUsuario, Rol, ViaIngreso
 from app.models.usuarios import Estudiante, Usuario
-from app.services.accounts import create_user, invite_user, normalize_email
+from app.services.accounts import activation_link, create_user, normalize_email, provision_access
 from app.services.directorio import email_dominio_permitido, mensaje_dominio
 from app.services.messaging import queue_email
 
@@ -97,9 +97,14 @@ def create_student_account(
     return user, est
 
 
-def send_via3_email(db: Session, user: Usuario, *, actor: Usuario | None = None) -> None:
-    """Vía 3: correo explicativo del STI con enlace de activación (72 h) y camino al F0."""
+def send_via3_email(db: Session, user: Usuario, *, actor: Usuario | None = None) -> dict:
+    """Vía 3: entrega el acceso. Sin correo (por defecto) deja una contraseña provisional lista; con
+    `EMAIL_ACTIVATION_REQUIRED=true` envía el correo explicativo con el enlace de activación (72 h)."""
     s = get_settings()
+    if not s.email_activation_required:
+        acceso = provision_access(db, user, actor=actor)
+        acceso["estado"] = str(user.estado)
+        return acceso
     raw = create_activation_token(user)
     base = s.frontend_url.rstrip("/")
     enlace = f"{base}{s.activation_path}?token={raw}"
@@ -120,9 +125,11 @@ def send_via3_email(db: Session, user: Usuario, *, actor: Usuario | None = None)
                 cuerpo=cuerpo, evento="CUENTA_CREADA_CSV", usuario_id=user.id)
     audit.log(db, actor, audit.Accion.USUARIO_CREADO, "usuario", user.id,
               {"rol": "ESTUDIANTE", "via": "MATRICULA_CSV", "invitacion": True})
+    return {"modo": "INVITACION", "email": user.email, "enlace_activacion": activation_link(raw),
+            "horas_validez": s.activation_token_hours}
 
 
-def resend_invitation(db: Session, user: Usuario, *, actor: Usuario, request=None) -> None:
+def resend_invitation(db: Session, user: Usuario, *, actor: Usuario, request=None) -> dict:
     """Reenvía la invitación (nuevo token de 72 h). Solo cuentas sin contraseña y pendientes."""
     if user.password_hash or str(user.estado) not in (
         EstadoUsuario.PENDIENTE_ACTIVACION, EstadoUsuario.PENDIENTE_CONSENTIMIENTO
@@ -131,7 +138,8 @@ def resend_invitation(db: Session, user: Usuario, *, actor: Usuario, request=Non
                        "«Recuperar contraseña».", "CUENTA_YA_ACTIVADA")
     via3 = str(user.rol) == Rol.ESTUDIANTE and str(user.estado) == EstadoUsuario.PENDIENTE_CONSENTIMIENTO
     if via3:
-        send_via3_email(db, user, actor=actor)
+        acceso = send_via3_email(db, user, actor=actor)
     else:
-        invite_user(db, user, actor=actor, request=request)
+        acceso = provision_access(db, user, actor=actor, request=request)
     audit.log(db, actor, "INVITACION_REENVIADA", "usuario", user.id, {"rol": str(user.rol)}, request=request)
+    return acceso

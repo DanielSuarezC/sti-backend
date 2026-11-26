@@ -112,3 +112,48 @@ class ResetPasswordRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     password_actual: str
     password_nueva: str
+
+
+# ----------------------------------------------------------------------------- registro autónomo (sin correo)
+class RegisterRequest(BaseModel):
+    rol: Literal["ESTUDIANTE", "DOCENTE", "FAMILIAR", "BIENESTAR", "COORDINADOR"]
+    nombre_completo: str = Field(min_length=3, max_length=255)
+    email: EmailStr
+    password: str = Field(min_length=1, max_length=200)
+    telefono: str | None = Field(default=None, max_length=20)
+    codigo_estudiante: str | None = Field(default=None, max_length=50)  # ESTUDIANTE
+    programa_id: int | None = None  # ESTUDIANTE (obligatorio), DOCENTE/COORDINADOR (opcional)
+    codigo_acceso: str | None = Field(default=None, max_length=100)  # BIENESTAR / COORDINADOR
+    codigo_vinculacion: str | None = Field(default=None, max_length=20)  # FAMILIAR
+    acepta_aviso_privacidad: bool = False
+
+
+class RegisterResponse(LoginResponse):
+    codigo_recuperacion: str
+
+
+class RegistroOpciones(BaseModel):
+    registro_abierto: bool
+    roles: list[str]
+    requiere_codigo_personal: list[str]
+    min_password_length: int
+
+
+class RecoverRequest(BaseModel):
+    email: EmailStr
+    codigo_recuperacion: str = Field(min_length=8, max_length=64)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class RecoverResponse(BaseModel):
+    detail: str
+    codigo_recuperacion: str  # código nuevo: el anterior ya no sirve
+
+
+class RegenerateRecoveryRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=200)
+
+
+class RecoveryCodeResponse(BaseModel):
+    detail: str
+    codigo_recuperacion: str

@@ -86,6 +86,7 @@ class AutorizacionFamiliar(Entity, Base):
     familiar_usuario_id: Mapped[int | None] = fk("usuario.id", nullable=True)
     familiar_nombre: Mapped[S255]
     familiar_email: Mapped[S255] = mapped_column(index=True)
+    codigo_vinculacion: Mapped[S20 | None]  # código que el familiar escribe al registrarse (sin correo); se borra al usarlo
     parentesco: Mapped[S100 | None]
     alcance: Mapped[JSL]  # lista de AlcanceFamiliar
     estado: Mapped[EstadoAutorizacionFamiliar] = enum_col(

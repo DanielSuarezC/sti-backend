@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     login_rate_limit_per_minute: int = 20  # por IP; 0 desactiva
     hsts_enabled: bool | None = None  # None = solo en producción o con cookie_secure
 
+    # --- Registro autónomo (sin verificación por correo) ---
+    # Los correos NO se verifican: el registro es inmediato y la recuperación de contraseña usa un código de
+    # recuperación que se muestra una sola vez. Poner EMAIL_ACTIVATION_REQUIRED=true (con SMTP) vuelve al flujo
+    # de invitación por enlace para las cuentas que crea el personal.
+    registro_abierto: bool = True
+    staff_access_code: str = ""  # código para registrarse como BIENESTAR/COORDINADOR; vacío = solo lo crea el admin
+    email_activation_required: bool = False
+    registro_rate_limit_per_hour: int = 30  # por IP; 0 desactiva
+
     # --- CORS ---
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
 

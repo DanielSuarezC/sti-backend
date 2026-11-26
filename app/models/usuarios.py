@@ -65,6 +65,7 @@ class Usuario(Entity, Base):
     activation_expires_at: Mapped[DT | None]
     reset_token_hash: Mapped[S100 | None] = mapped_column(index=True)
     reset_expires_at: Mapped[DT | None]
+    recovery_code_hash: Mapped[S100 | None]  # código de recuperación (sin correo); solo el hash
     auth_source: Mapped[FuenteSSO] = enum_col(FuenteSSO, default=FuenteSSO.LOCAL)
     sso_subject: Mapped[S255 | None] = mapped_column(unique=True)
 

@@ -345,6 +345,7 @@ def import_students(
         "dry_run": dry_run, "total_filas": an["total_filas"], "validas": an["nuevas"] + an["ya_existentes"],
         "nuevas": an["nuevas"], "ya_existentes": an["ya_existentes"], "con_errores": an["con_errores"],
         "errores": an["errores"], "creados": 0, "omitidos": an["ya_existentes"], "omitidos_por_error": 0,
+        "credenciales": [],
     }
     if dry_run:
         return base
@@ -366,7 +367,9 @@ def import_students(
                     estado=EstadoUsuario.PENDIENTE_CONSENTIMIENTO, telefono=f["telefono"],
                     anio_ingreso=f["anio_ingreso"], semestre_actual=f["semestre_actual"], crear_matricula=True, hoy=hoy,
                 )
-                send_via3_email(db, user, actor=actor)
+                acceso = send_via3_email(db, user, actor=actor)
+            base["credenciales"].append({"nombre_completo": f["nombre_completo"], "codigo_estudiante": f["codigo_estudiante"],
+                                         **acceso})
             creados += 1
         except Exception as exc:  # noqa: BLE001 - la fila falla sola; el resto sigue
             base["errores"].append({"fila": f["fila"], "campo": "fila", "mensaje": f"No se pudo crear la cuenta: {str(exc)[:160]}"})

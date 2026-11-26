@@ -16,7 +16,7 @@ from app.core.db import get_db
 from app.core.deps import get_current_user
 from app.core.errors import AppError, Conflict, Forbidden, Locked, Unauthorized
 from app.core.permissions import user_has_consent
-from app.core.ratelimit import login_rate_limit
+from app.core.ratelimit import check_rate_limit, login_rate_limit
 from app.core.security import (
     assert_not_locked,
     clear_refresh_cookie,
@@ -26,6 +26,7 @@ from app.core.security import (
     find_user_by_reset_token,
     hash_password,
     hash_token,
+    issue_recovery_code,
     issue_refresh_token,
     password_needs_rehash,
     register_failed_login,
@@ -36,6 +37,7 @@ from app.core.security import (
     set_refresh_cookie,
     validate_password_strength,
     verify_password,
+    verify_recovery_code,
 )
 from app.models.base import utcnow
 from app.models.consentimiento import AutorizacionFamiliar
@@ -51,10 +53,17 @@ from app.schemas.auth import (
     Me,
     PreferenciasUI,
     PreferenciasUIUpdate,
+    RecoverRequest,
+    RecoverResponse,
+    RecoveryCodeResponse,
+    RegenerateRecoveryRequest,
+    RegisterRequest,
+    RegisterResponse,
+    RegistroOpciones,
     ResetPasswordRequest,
 )
 from app.schemas.common import MessageResponse
-from app.services import sso
+from app.services import accounts, sso
 from app.services.notifications import Evento, notify
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -110,8 +119,8 @@ def _session_response(db: Session, user: Usuario, request: Request, response: Re
 def _check_estado_for_login(user: Usuario) -> None:
     estado = str(user.estado)
     if estado == EstadoUsuario.PENDIENTE_ACTIVACION:
-        raise Forbidden("Su cuenta aún no está activada. Use el enlace de activación que recibió por correo.",
-                        "CUENTA_NO_ACTIVADA")
+        raise Forbidden("Su cuenta aún no está activada. Use el enlace de activación que le entregaron o pida a "
+                        "Bienestar que le restablezca el acceso.", "CUENTA_NO_ACTIVADA")
     if estado in (EstadoUsuario.INACTIVO, EstadoUsuario.SUSPENDIDO):
         raise Forbidden("Su cuenta está inactiva. Comuníquese con el administrador o con Bienestar.", "CUENTA_INACTIVA")
 
@@ -186,6 +195,82 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db),
     db.commit()
     clear_refresh_cookie(response)
     return MessageResponse(detail="Sesión cerrada.")
+
+
+# ----------------------------------------------------------------------------- registro autónomo (sin correo)
+@router.get("/registro/opciones", response_model=RegistroOpciones)
+def registro_opciones():
+    s = get_settings()
+    return RegistroOpciones(registro_abierto=s.registro_abierto, roles=accounts.registro_roles_disponibles(),
+                            requiere_codigo_personal=[str(r) for r in accounts.ROLES_REGISTRO_CON_CODIGO],
+                            min_password_length=s.min_password_length)
+
+
+@router.post("/register", response_model=RegisterResponse, status_code=201)
+def register(body: RegisterRequest, request: Request, response: Response, db: Session = Depends(get_db)):
+    """Crea la cuenta al instante (sin verificar el correo), abre sesión y entrega el código de recuperación."""
+    ip = audit.client_ip(request) or "desconocida"
+    check_rate_limit(f"registro:{ip}", get_settings().registro_rate_limit_per_hour, 3600)
+    if not body.acepta_aviso_privacidad:
+        raise AppError("Debe aceptar el aviso de privacidad para crear su cuenta.", "AVISO_PRIVACIDAD_REQUERIDO",
+                       status_code=422)
+    user, codigo = accounts.register_self(
+        db, rol=body.rol, email=body.email, nombre_completo=body.nombre_completo, password=body.password,
+        telefono=body.telefono, codigo_estudiante=body.codigo_estudiante, programa_id=body.programa_id,
+        codigo_acceso=body.codigo_acceso, codigo_vinculacion=body.codigo_vinculacion, request=request)
+    user.fecha_ultima_sesion = utcnow()
+    session = _session_response(db, user, request, response)
+    audit.log(db, user, audit.Accion.LOGIN_OK, "usuario", user.id, {"via": "registro"}, request=request)
+    db.commit()
+    return RegisterResponse(**session.model_dump(), codigo_recuperacion=codigo)
+
+
+@router.post("/recover", response_model=RecoverResponse, dependencies=[Depends(login_rate_limit)])
+def recover(body: RecoverRequest, request: Request, db: Session = Depends(get_db)):
+    """Restablece la contraseña con el código de recuperación (sin correo). Entrega un código nuevo."""
+    err = AppError("El correo o el código de recuperación no son correctos. Revíselos o pida a Bienestar que le "
+                   "restablezca el acceso.", "CODIGO_RECUPERACION_INVALIDO", status_code=400)
+    user = db.scalar(select(Usuario).where(Usuario.email == body.email.strip().lower()))
+    if user is None or str(user.estado) in (EstadoUsuario.INACTIVO, EstadoUsuario.SUSPENDIDO):
+        verify_password("x", _DUMMY_HASH)
+        raise err
+    assert_not_locked(user)
+    if not verify_recovery_code(user, body.codigo_recuperacion):
+        locked_now = register_failed_login(user)
+        audit.log(db, user, audit.Accion.LOGIN_FALLIDO, "usuario", user.id, {"motivo": "codigo_recuperacion"},
+                  request=request)
+        db.commit()
+        if locked_now:
+            assert_not_locked(user)
+        raise err
+    validate_password_strength(body.password)
+    user.password_hash = hash_password(body.password)
+    user.password_changed_at = utcnow()
+    user.reset_token_hash = None
+    user.reset_expires_at = None
+    reset_failed_logins(user)
+    if str(user.estado) == EstadoUsuario.PENDIENTE_ACTIVACION:
+        user.estado = accounts._estado_tras_acceso(db, user)
+    revoke_all_user_tokens(db, user.id)
+    nuevo = issue_recovery_code(user)
+    audit.log(db, user, audit.Accion.CONTRASENA_RESTABLECIDA, "usuario", user.id, {"via": "codigo_recuperacion"},
+              request=request)
+    db.commit()
+    return RecoverResponse(detail="Su contraseña fue restablecida. Guarde su nuevo código de recuperación.",
+                           codigo_recuperacion=nuevo)
+
+
+@router.post("/recovery-code/regenerate", response_model=RecoveryCodeResponse)
+def regenerate_recovery_code(body: RegenerateRecoveryRequest, request: Request,
+                             user: Usuario = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Genera un código de recuperación nuevo (el anterior deja de servir). Pide la contraseña actual."""
+    if not verify_password(body.password, user.password_hash):
+        raise AppError("La contraseña no es correcta.", "CONTRASENA_ACTUAL_INCORRECTA", status_code=400)
+    codigo = issue_recovery_code(user)
+    audit.log(db, user, "CODIGO_RECUPERACION_REGENERADO", "usuario", user.id, request=request)
+    db.commit()
+    return RecoveryCodeResponse(detail="Generamos un código nuevo. Guárdelo: no se vuelve a mostrar.",
+                                codigo_recuperacion=codigo)
 
 
 # ----------------------------------------------------------------------------- activación / recuperación

@@ -21,7 +21,7 @@ from app.models.enums import EstadoSolicitudIngreso, EstadoUsuario, Rol, ViaIngr
 from app.models.usuarios import Usuario
 from app.schemas.solicitudes import AprobarBody, RechazarBody, SolicitudPublica
 from app.services import student_intake
-from app.services.accounts import invite_user, normalize_email
+from app.services.accounts import normalize_email, provision_access
 from app.services.directorio import directory_settings, get_directorio, mensaje_dominio
 from app.services.messaging import queue_email
 from app.services.notifications import Evento, notify
@@ -127,14 +127,18 @@ def aprobar(solicitud_id: int, request: Request, body: AprobarBody | None = None
         programa_id=programa_id, via=ViaIngreso.AUTOIDENTIFICACION, estado=EstadoUsuario.PENDIENTE_ACTIVACION,
         telefono=s.telefono, bienestar_asignado_id=actor.id if str(actor.rol) == Rol.BIENESTAR else None,
     )
-    invite_user(db, user, actor=actor, request=request)
+    acceso = provision_access(db, user, actor=actor, request=request)
     s.estado = EstadoSolicitudIngreso.APROBADA
     s.programa_id = programa_id
     s.revisado_por_id, s.revisado_at, s.usuario_creado_id = actor.id, utcnow(), user.id
     audit.log(db, actor, "SOLICITUD_INGRESO_APROBADA", "solicitud_ingreso", s.id, {"estudiante_id": est.id}, request=request,
               estudiante_id=est.id)
     db.commit()
-    return {**_out(db, s), "detail": "Solicitud aprobada. Enviamos la invitación de activación (72 horas) al correo institucional."}
+    detalle = ("Solicitud aprobada. La cuenta quedó lista: entregue al estudiante el correo y la contraseña "
+               "provisional que aparecen abajo (se muestran una sola vez)."
+               if acceso["modo"] == "DIRECTO" else
+               "Solicitud aprobada. Enviamos la invitación de activación (72 horas) al correo del estudiante.")
+    return {**_out(db, s), "detail": detalle, "acceso": acceso}
 
 
 @router.post("/{solicitud_id}/rechazar")

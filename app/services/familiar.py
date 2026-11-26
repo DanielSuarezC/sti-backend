@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, date, datetime, time
 from typing import Any
 
@@ -75,6 +76,11 @@ def _viva(a: AutorizacionFamiliar) -> bool:
     return _estado_efectivo(a) in ("VIGENTE", "PENDIENTE")
 
 
+def _nuevo_codigo_vinculacion() -> str:
+    """Código corto que el estudiante le entrega al familiar (alfabeto sin 0/O/1/I)."""
+    return "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
+
+
 def serializar_autorizacion(db: Session, a: AutorizacionFamiliar) -> dict[str, Any]:
     u = db.get(Usuario, a.familiar_usuario_id) if a.familiar_usuario_id else None
     return {
@@ -83,6 +89,7 @@ def serializar_autorizacion(db: Session, a: AutorizacionFamiliar) -> dict[str, A
         "cuenta_activada": bool(u and u.password_hash and str(u.estado) == EstadoUsuario.ACTIVO),
         "otorgada_at": a.otorgada_at, "vigencia_hasta": a.expira_at, "revocada_at": a.revocada_at,
         "motivo_revocacion": a.motivo_revocacion,
+        "codigo_vinculacion": a.codigo_vinculacion if _estado_efectivo(a) == "PENDIENTE" else None,
     }
 
 
@@ -121,31 +128,36 @@ def otorgar(db: Session, est: Estudiante, estudiante_user: Usuario, body, reques
     if any(_viva(a) for a in previas):
         raise Conflict("Ya autorizó a esta persona. Edite su autorización o revóquela primero.", "AUTORIZACION_DUPLICADA")
 
+    settings = get_settings()
     user = db.scalar(select(Usuario).where(Usuario.email == email))
     if user is None:
-        user = create_user(db, email=email, nombre_completo=body.nombre, rol=Rol.FAMILIAR)
+        if settings.email_activation_required:  # flujo por correo: se crea la cuenta y se invita
+            user = create_user(db, email=email, nombre_completo=body.nombre, rol=Rol.FAMILIAR)
+        # sin correo: la autorización queda PENDIENTE con un código de vinculación; el familiar se registra con él
     elif str(user.rol) != Rol.FAMILIAR:
         raise Conflict("Ese correo ya pertenece a otra cuenta del sistema que no es de familiar. Use otro correo.",
                        "CORREO_EN_USO")
     elif str(user.estado) == EstadoUsuario.INACTIVO:
         user.estado = EstadoUsuario.ACTIVO if user.password_hash else EstadoUsuario.PENDIENTE_ACTIVACION
-    activado = bool(user.password_hash) and str(user.estado) == EstadoUsuario.ACTIVO
+    activado = user is not None and bool(user.password_hash) and str(user.estado) == EstadoUsuario.ACTIVO
+    sin_correo = user is None  # no hay cuenta aún: se vincula con código al registrarse
 
     a = AutorizacionFamiliar(
-        estudiante_id=est.id, familiar_usuario_id=user.id, familiar_nombre=body.nombre.strip(), familiar_email=email,
-        parentesco=body.parentesco, alcance=alcance_a_lista(alcance),
+        estudiante_id=est.id, familiar_usuario_id=user.id if user else None, familiar_nombre=body.nombre.strip(),
+        familiar_email=email, parentesco=body.parentesco, alcance=alcance_a_lista(alcance),
         estado=EstadoAutorizacionFamiliar.VIGENTE if activado else EstadoAutorizacionFamiliar.PENDIENTE,
+        codigo_vinculacion=_nuevo_codigo_vinculacion() if sin_correo else None,
         otorgada_at=utcnow(), expira_at=expira)
     db.add(a)
     db.flush()
-    settings = get_settings()
-    enlace = f"{settings.frontend_url.rstrip('/')}/familiar"
-    if not activado:  # cuenta nueva o sin activar: invitacion con token de activacion (72 h)
-        raw = invite_user(db, user, actor=estudiante_user, request=request)
-        enlace = f"{settings.frontend_url.rstrip('/')}{settings.activation_path}?token={raw}"
-    notify(db, Evento.AUTORIZACION_FAMILIAR_INVITACION, [user], {
-        "nombre": body.nombre, "estudiante_nombre": estudiante_user.nombre_completo,
-        "alcance": ", ".join(_ETIQUETAS[k] for k, v in alcance.items() if v), "enlace_activacion": enlace})
+    if user is not None:
+        enlace = f"{settings.frontend_url.rstrip('/')}/familiar"
+        if not activado:  # cuenta sin activar (flujo por correo): invitacion con token de activacion (72 h)
+            raw = invite_user(db, user, actor=estudiante_user, request=request)
+            enlace = f"{settings.frontend_url.rstrip('/')}{settings.activation_path}?token={raw}"
+        notify(db, Evento.AUTORIZACION_FAMILIAR_INVITACION, [user], {
+            "nombre": body.nombre, "estudiante_nombre": estudiante_user.nombre_completo,
+            "alcance": ", ".join(_ETIQUETAS[k] for k, v in alcance.items() if v), "enlace_activacion": enlace})
     _sincronizar_flag_familia(db, est)
     audit.log(db, estudiante_user, audit.Accion.AUTORIZACION_FAMILIAR_OTORGADA, "autorizacion_familiar", a.id,
               {"alcance": a.alcance, "parentesco": body.parentesco, "vigencia_hasta": str(body.vigencia_hasta)},

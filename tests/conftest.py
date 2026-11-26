@@ -84,3 +84,13 @@ def world(db):
 @pytest.fixture()
 def auth():
     return factories.auth_headers
+
+
+@pytest.fixture()
+def con_correo(monkeypatch):
+    """Flujo heredado: el personal invita por enlace de activación (`EMAIL_ACTIVATION_REQUIRED=true`)."""
+    monkeypatch.setenv("EMAIL_ACTIVATION_REQUIRED", "true")
+    reset_settings_cache()
+    yield
+    monkeypatch.delenv("EMAIL_ACTIVATION_REQUIRED", raising=False)
+    reset_settings_cache()
